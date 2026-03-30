@@ -27,6 +27,22 @@ data class BillingProductDetail(
         }
     }
 
+    fun getFormattedPrice(): String {
+        return if (isSubscription()) {
+            basePlanOffer()?.recurringPhase()?.formattedPrice ?: ""
+        } else {
+            oneTimePurchaseOfferDetails?.formattedPrice ?: ""
+        }
+    }
+
+    fun getPricePerDay(days: Int): String {
+        val micros = getRecurringPriceAmountMicros()
+        if (micros == 0L) return ""
+        val perDay = micros / 1_000_000.0 / days
+        val currency = getRecurringPriceCurrencyCode()
+        return String.format("%.2f %s", perDay, currency)
+    }
+
     fun isSubscription(): Boolean = productType == BillingClient.ProductType.SUBS
 
     /** Returns the recurring (base) price in micros — excludes trial/intro phases. */
@@ -75,7 +91,7 @@ data class BillingProductDetail(
         if (introOffer != null) return introOffer
 
         // 3. Base plan (offerId == null)
-        return offers.firstOrNull { it.offerId == null } ?: offers.lastOrNull()
+        return basePlanOffer()
     }
 
     override fun toString(): String {
@@ -85,7 +101,12 @@ data class BillingProductDetail(
                 "productType='$productType', " +
                 "description='$description', " +
                 "oneTimePurchaseOfferDetails=$oneTimePurchaseOfferDetails, " +
-                "subscriptionOfferDetails=${subscriptionOfferDetails?.joinToString(prefix = "[", postfix = "]")}" +
+                "subscriptionOfferDetails=${
+                    subscriptionOfferDetails?.joinToString(
+                        prefix = "[",
+                        postfix = "]"
+                    )
+                }" +
                 ")"
     }
 

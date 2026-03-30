@@ -9,7 +9,7 @@ data class PricingPhase(
     val formattedPrice: String,
     val recurrenceMode: Int,
     val priceCurrencyCode: String
-) : PriceAble {
+) {
 
     companion object {
         private fun ProductDetails.PricingPhase.toPricingPhase(): PricingPhase {
@@ -27,10 +27,6 @@ data class PricingPhase(
             return pricingPhaseList.map { it.toPricingPhase() }
         }
 
-    }
-
-    override fun getReadAblePrice(): String {
-        return formattedPrice
     }
 
 }

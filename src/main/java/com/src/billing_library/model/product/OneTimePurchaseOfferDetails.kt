@@ -6,7 +6,7 @@ data class OneTimePurchaseOfferDetails(
     val formattedPrice: String,
     val priceAmountMicros: Long,
     val priceCurrencyCode: String
-) : PriceAble {
+) {
 
     companion object {
         fun ProductDetails.OneTimePurchaseOfferDetails.toOneTimePurchaseOfferDetails(): OneTimePurchaseOfferDetails {
@@ -16,10 +16,6 @@ data class OneTimePurchaseOfferDetails(
                 priceCurrencyCode = priceCurrencyCode
             )
         }
-    }
-
-    override fun getReadAblePrice(): String {
-        return formattedPrice
     }
 
 }
