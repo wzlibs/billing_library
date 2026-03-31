@@ -182,13 +182,15 @@ class AdjustIapTracker(
     ) {
         val event = AdjustEvent(eventToken).apply {
             setRevenue(price, currency)
+            setProductId(purchase.productId)
+            setPurchaseToken(purchase.purchaseToken)
+            setOrderId(purchase.orderId)
             setDeduplicationId(adjustDedupId)
-            addCallbackParameter("product_id", purchase.productId)
             addCallbackParameter("product_type", productType)
-            addCallbackParameter("order_id", purchase.orderId ?: "")
-            addCallbackParameter("purchase_token", purchase.purchaseToken)
         }
-        Adjust.trackEvent(event)
+        Adjust.verifyAndTrackPlayStorePurchase(event) { result ->
+            Log.d(TAG, "Verification: status=${result.verificationStatus} code=${result.code} message=${result.message}")
+        }
         Log.d(
             TAG,
             "TRACKED | price=$price $currency" +
