@@ -4,6 +4,7 @@ import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.ProductDetails
 import com.src.billing_library.model.product.OneTimePurchaseOfferDetails.Companion.toOneTimePurchaseOfferDetails
 import com.src.billing_library.model.product.SubscriptionOfferDetail.Companion.toSubscriptionOfferDetails
+import java.util.Locale
 
 data class BillingProductDetail(
     val productId: String,
@@ -35,15 +36,15 @@ data class BillingProductDetail(
         }
     }
 
-    fun getPricePerDay(days: Int): String {
-        val micros = getRecurringPriceAmountMicros()
-        if (micros == 0L) return ""
-        val perDay = micros / 1_000_000.0 / days
-        val currency = getRecurringPriceCurrencyCode()
-        return String.format("%.2f %s", perDay, currency)
-    }
-
     fun isSubscription(): Boolean = productType == BillingClient.ProductType.SUBS
+
+    fun getRecurringPricePerDay(days: Int): String {
+        val micros = getRecurringPriceAmountMicros()
+        val currency = getRecurringPriceCurrencyCode()
+        if (micros == 0L) return String.format(Locale.US, "%.2f %s", 0.0, currency)
+        val perDay = micros / 1_000_000.0 / days
+        return String.format(Locale.US, "%.2f %s", perDay, currency)
+    }
 
     /** Returns the recurring (base) price in micros — excludes trial/intro phases. */
     fun getRecurringPriceAmountMicros(): Long {
@@ -65,7 +66,6 @@ data class BillingProductDetail(
 
     private fun basePlanOffer(): SubscriptionOfferDetail? {
         return subscriptionOfferDetails?.find { it.offerId == null }
-            ?: subscriptionOfferDetails?.lastOrNull()
     }
 
     /**
