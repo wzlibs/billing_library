@@ -7,6 +7,7 @@ import androidx.core.content.edit
 import com.adjust.sdk.Adjust
 import com.adjust.sdk.AdjustEvent
 import com.src.billing_library.model.product.BillingProductDetail
+import com.src.billing_library.model.product.PricingPhase
 import com.src.billing_library.model.purchase.PurchaseRecord
 import java.util.Calendar
 
@@ -14,13 +15,15 @@ import java.util.Calendar
  * Tracks IAP revenue to Adjust for ad-spend decision-making.
  *
  * Two tracking paths:
- * 1. [trackPurchase] — called immediately after a successful purchase.
- *    Handles first payments only. Skips trials (price = 0). Deduped by cycleKey(token, purchaseTime).
+ * 1. [trackPurchase] — called immediately after a successful purchase (billing flow).
+ *    Logs first payment only. Skips if price = 0 (trial/free intro). Deduped by cycleKey(token, purchaseTime).
  *
  * 2. [trackPurchases] — called on app open via queryPurchasesAsync.
- *    Handles subscription renewals by computing expected charge cycles from
- *    purchaseTime + pricingPhases. Catches up missed cycles if user was offline.
- *    Deduped per cycle by cycleKey(token, chargeTime). Skips trial/free phases (price = 0).
+ *    Logs the subscription cycle the user is CURRENTLY in (cycleStart <= now < cycleEnd).
+ *    Skips the first cycle (already handled by trackPurchase).
+ *    Does NOT catch up missed past cycles — if user was offline during cycle 2 and opens app
+ *    in cycle 3, cycle 2 is skipped and only cycle 3 is logged.
+ *    Deduped per cycle by cycleKey(token, cycleStart). Skips trial/free phases (price = 0).
  *
  * @param context Application context
  * @param eventToken Adjust event token for all IAP events
@@ -34,27 +37,19 @@ class AdjustIapTracker(
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     // -------------------------------------------------------------------------
-    // First purchase
+    // Public API
     // -------------------------------------------------------------------------
 
     /**
      * Track the initial purchase immediately after the billing flow completes.
-     * Safe to call multiple times — skips if already logged for this purchaseToken.
-     * Skips silently if price = 0 (trial or free introductory period).
+     * Skips if price = 0 (trial or free introductory period).
+     * Deduped — safe to call multiple times for the same purchase.
      */
     fun trackPurchase(
         purchase: PurchaseRecord,
         billingProductDetail: BillingProductDetail?,
     ) {
         val detail = billingProductDetail ?: return
-        val token = purchase.purchaseToken
-
-        val key = cycleKey(token, purchase.purchaseTime)
-        if (prefs.getBoolean(key, false)) {
-            Log.d(TAG, "trackPurchase SKIP (already logged): token=$token")
-            return
-        }
-
         val (price, currency) = firstPurchasePrice(detail)
 
         if (price <= 0.0) {
@@ -62,9 +57,11 @@ class AdjustIapTracker(
             return
         }
 
-        sendToAdjust(price, currency, purchase, detail.productType, adjustDedupId = token)
+        val key = cycleKey(purchase.purchaseToken, purchase.purchaseTime)
+        if (isAlreadyLogged(key)) return
 
-        prefs.edit { putBoolean(key, true) }
+        sendToAdjust(price, currency, purchase, detail.productType, adjustDedupId = key)
+        markLogged(key)
     }
 
     // -------------------------------------------------------------------------
@@ -72,9 +69,8 @@ class AdjustIapTracker(
     // -------------------------------------------------------------------------
 
     /**
-     * Compute and track all subscription renewal cycles that have occurred up to now.
-     * Called from queryProductDetailsAndPurchases on app open.
-     *
+     * Track subscription auto-renewal on app open.
+     * Only logs the cycle the user is currently in. Missed past cycles are skipped.
      */
     fun trackPurchases(
         purchases: List<PurchaseRecord>,
@@ -84,80 +80,106 @@ class AdjustIapTracker(
         purchases.filter { it.isPurchased }.forEach { purchase ->
             val detail = productDetails[purchase.productId] ?: return@forEach
             if (detail.isSubscription()) {
-                trackSubscriptionRenewals(purchase, detail, now)
+                trackCurrentRenewalCycle(purchase, detail, now)
             }
             // Inapp one-time: no renewal cycles, nothing to do here
         }
     }
 
-    private fun trackSubscriptionRenewals(
+    private fun trackCurrentRenewalCycle(
         purchase: PurchaseRecord,
         detail: BillingProductDetail,
         now: Long
     ) {
         val offer = detail.bestSubscriptionOffer() ?: return
+        val currentCycle = findCurrentCycle(purchase.purchaseTime, offer.pricingPhases, now) ?: return
 
-        val token = purchase.purchaseToken
-        var phaseStart = purchase.purchaseTime
-        var reachedFuture = false
+        if (currentCycle.price <= 0.0) {
+            Log.d(TAG, "trackRenewal SKIP (trial/free): productId=${purchase.productId}")
+            return
+        }
 
-        for (phase in offer.pricingPhases) {
-            if (reachedFuture) break
+        val key = cycleKey(purchase.purchaseToken, currentCycle.cycleStart)
+        if (isAlreadyLogged(key)) return
 
+        sendToAdjust(
+            price = currentCycle.price,
+            currency = currentCycle.currency,
+            purchase = purchase,
+            productType = detail.productType,
+            adjustDedupId = key
+        )
+        markLogged(key)
+    }
+
+    /**
+     * Walk through pricingPhases to find the billing cycle that [now] falls into.
+     * Skips the first cycle (purchaseTime) — that is handled by [trackPurchase].
+     *
+     * Returns null if:
+     * - [now] is still within the first cycle (user hasn't renewed yet)
+     * - No cycle boundary matches (e.g. subscription has ended)
+     */
+    private fun findCurrentCycle(
+        purchaseTime: Long,
+        pricingPhases: List<PricingPhase>,
+        now: Long
+    ): CycleInfo? {
+        var cycleStart = purchaseTime
+        var isFirstCycle = true
+
+        for (phase in pricingPhases) {
             val period = parsePeriod(phase.billingPeriod) ?: break
             // recurrenceMode: 1 = INFINITE_RECURRING, 2 = FINITE_RECURRING, 3 = NON_RECURRING
-            val isInfinite = phase.recurrenceMode == 1
-            val maxCycles = if (isInfinite) Int.MAX_VALUE else phase.billingCycleCount
-
-            var cycleStart = phaseStart
+            val maxCycles = if (phase.recurrenceMode == 1) Int.MAX_VALUE else phase.billingCycleCount
 
             for (i in 0 until maxCycles) {
-                if (cycleStart > now) {
-                    reachedFuture = true
-                    break
-                }
+                val cycleEnd = addPeriod(cycleStart, period)
 
-                // Cycle 0 (cycleStart == purchaseTime) is always skipped here:
-                // - If paid sub with no trial → trackPurchase already handled it
-                // - If free trial phase      → price = 0, not a real charge
-                // Renewals start from cycle 1 onward (cycleStart > purchaseTime).
-                if (cycleStart == purchase.purchaseTime) {
-                    cycleStart = addPeriod(cycleStart, period)
+                if (isFirstCycle) {
+                    // Skip — trackPurchase already handled this cycle
+                    isFirstCycle = false
+                    cycleStart = cycleEnd
                     continue
                 }
 
-                if (phase.priceAmountMicros > 0) {
-                    val key = cycleKey(token, cycleStart)
-                    if (!prefs.getBoolean(key, false)) {
-                        sendToAdjust(
-                            price = phase.priceAmountMicros / 1_000_000.0,
-                            currency = phase.priceCurrencyCode,
-                            purchase = purchase,
-                            productType = detail.productType,
-                            adjustDedupId = key
-                        )
-                        prefs.edit { putBoolean(key, true) }
-                    } else {
-                        Log.d(TAG, "trackRenewal SKIP (already logged): $key")
-                    }
-                } else {
-                    Log.d(
-                        TAG,
-                        "trackRenewal SKIP (price=0, trial/free): cycle=$i phase=${phase.billingPeriod}"
+                if (cycleStart > now) return null       // gone past now, sub is in the future
+
+                if (now < cycleEnd) {
+                    // now falls within [cycleStart, cycleEnd) → this is the current active cycle
+                    return CycleInfo(
+                        cycleStart = cycleStart,
+                        price = phase.priceAmountMicros / 1_000_000.0,
+                        currency = phase.priceCurrencyCode
                     )
                 }
 
-                cycleStart = addPeriod(cycleStart, period)
+                cycleStart = cycleEnd
             }
-
-            // Advance phase anchor for the next phase
-            if (!reachedFuture) phaseStart = cycleStart
         }
+
+        return null
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private data class CycleInfo(
+        val cycleStart: Long,
+        val price: Double,
+        val currency: String
+    )
+
+    private fun isAlreadyLogged(key: String): Boolean {
+        val logged = prefs.getBoolean(key, false)
+        if (logged) Log.d(TAG, "SKIP (already logged): $key")
+        return logged
+    }
+
+    private fun markLogged(key: String) {
+        prefs.edit { putBoolean(key, true) }
+    }
 
     private fun firstPurchasePrice(detail: BillingProductDetail): Pair<Double, String> {
         return if (detail.isSubscription()) {

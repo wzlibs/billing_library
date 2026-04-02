@@ -187,7 +187,7 @@ class GooglePlayBillingLibrary(
             val result = suspendCancellableCoroutine { cont ->
                 billingClient.queryProductDetailsAsync(
                     QueryProductDetailsParams.newBuilder().setProductList(params).build()
-                ) { _, details -> cont.resume(details.productDetailsList) }
+                ) { _, details -> if (cont.isActive) cont.resume(details.productDetailsList) }
             }
             all.addAll(result)
         }
@@ -201,7 +201,7 @@ class GooglePlayBillingLibrary(
             val result = suspendCancellableCoroutine { cont ->
                 billingClient.queryProductDetailsAsync(
                     QueryProductDetailsParams.newBuilder().setProductList(params).build()
-                ) { _, details -> cont.resume(details.productDetailsList) }
+                ) { _, details -> if (cont.isActive) cont.resume(details.productDetailsList) }
             }
             all.addAll(result)
         }
@@ -214,14 +214,14 @@ class GooglePlayBillingLibrary(
             billingClient.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder()
                     .setProductType(BillingClient.ProductType.SUBS).build()
-            ) { _, list -> cont.resume(list) }
+            ) { _, list -> if (cont.isActive) cont.resume(list) }
         }
         all.addAll(subsPurchases)
         val inAppPurchases = suspendCancellableCoroutine { cont ->
             billingClient.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder()
                     .setProductType(BillingClient.ProductType.INAPP).build()
-            ) { _, list -> cont.resume(list) }
+            ) { _, list -> if (cont.isActive) cont.resume(list) }
         }
         all.addAll(inAppPurchases)
         return all.flatMap { it.toPurchaseRecords() }
