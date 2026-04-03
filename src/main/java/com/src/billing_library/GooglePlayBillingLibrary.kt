@@ -249,23 +249,25 @@ class GooglePlayBillingLibrary(
         }
     }
 
-    override fun purchase(activity: Activity, billingProductDetail: BillingProductDetail) {
-        val productDetail: ProductDetails = detailProducts[billingProductDetail.productId] ?: run {
+    override fun purchase(activity: Activity, productId: String) {
+        val productDetail: ProductDetails = detailProducts[productId] ?: run {
             emitUpdate(PurchaseUpdate.Error)
             return
         }
 
+        val billingProductDetail = productDetail.toBillingProductDetail()
+
         val productDetailsParamsList = when {
             billingProductDetail.isSubscription() -> {
-                val offer = billingProductDetail.bestSubscriptionOffer() ?: run {
-                    Log.e(TAG, "No subscription offer found for: ${billingProductDetail.productId}")
+                val offerToken = billingProductDetail.bestSubscriptionOffer()?.offerToken ?: run {
+                    Log.e(TAG, "No subscription offer found for: $productId")
                     emitUpdate(PurchaseUpdate.Error)
                     return
                 }
                 listOf(
                     BillingFlowParams.ProductDetailsParams.newBuilder()
                         .setProductDetails(productDetail)
-                        .setOfferToken(offer.offerToken)
+                        .setOfferToken(offerToken)
                         .build()
                 )
             }

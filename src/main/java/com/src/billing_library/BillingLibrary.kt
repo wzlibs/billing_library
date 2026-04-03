@@ -5,7 +5,6 @@ import com.src.billing_library.model.BillingQueryResult
 import com.src.billing_library.model.connection.BillingConnectionResult
 import com.src.billing_library.model.product.BillingProduct
 import com.src.billing_library.model.purchase.PurchaseUpdate
-import com.src.billing_library.model.product.BillingProductDetail
 import com.src.billing_library.model.purchase.PurchaseRecord
 
 interface BillingLibrary {
@@ -18,7 +17,7 @@ interface BillingLibrary {
         products: List<BillingProduct>
     ): BillingQueryResult
 
-    fun purchase(activity: Activity, billingProductDetail: BillingProductDetail)
+    fun purchase(activity: Activity, productId: String)
 
     fun endConnection()
 
