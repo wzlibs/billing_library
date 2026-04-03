@@ -25,10 +25,9 @@ import com.src.billing_library.model.product.BillingProductDetail
 import com.src.billing_library.model.product.BillingProductDetail.Companion.toBillingProductDetail
 import com.src.billing_library.model.purchase.PurchaseRecord
 import com.src.billing_library.model.purchase.PurchaseRecord.Companion.toPurchaseRecords
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 private typealias ProductId = String
 
@@ -121,22 +120,22 @@ class GooglePlayBillingLibrary(
         }
     }
 
-    override suspend fun connect(): BillingConnectionResult = suspendCancellableCoroutine { cont ->
+    override suspend fun connect(): BillingConnectionResult {
+        val deferred = CompletableDeferred<BillingConnectionResult>()
         billingClient.startConnection(object : BillingClientStateListener {
             override fun onBillingServiceDisconnected() {
-                if (cont.isActive) cont.resume(BillingConnectionResult.Disconnected)
+                deferred.complete(BillingConnectionResult.Disconnected)
             }
 
             override fun onBillingSetupFinished(billingResult: BillingResult) {
-                if (cont.isActive) {
-                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                        cont.resume(BillingConnectionResult.Connected)
-                    } else {
-                        cont.resume(BillingConnectionResult.Failed)
-                    }
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                    deferred.complete(BillingConnectionResult.Connected)
+                } else {
+                    deferred.complete(BillingConnectionResult.Failed)
                 }
             }
         })
+        return deferred.await()
     }
 
     override suspend fun queryProductDetailsAndPurchases(
@@ -184,12 +183,11 @@ class GooglePlayBillingLibrary(
                     .setProductType(BillingClient.ProductType.SUBS)
                     .build()
             }
-            val result = suspendCancellableCoroutine { cont ->
-                billingClient.queryProductDetailsAsync(
-                    QueryProductDetailsParams.newBuilder().setProductList(params).build()
-                ) { _, details -> if (cont.isActive) cont.resume(details.productDetailsList) }
-            }
-            all.addAll(result)
+            val deferred = CompletableDeferred<List<ProductDetails>>()
+            billingClient.queryProductDetailsAsync(
+                QueryProductDetailsParams.newBuilder().setProductList(params).build()
+            ) { _, details -> deferred.complete(details.productDetailsList) }
+            all.addAll(deferred.await())
         }
         if (inAppIds.isNotEmpty()) {
             val params = inAppIds.map {
@@ -198,32 +196,32 @@ class GooglePlayBillingLibrary(
                     .setProductType(BillingClient.ProductType.INAPP)
                     .build()
             }
-            val result = suspendCancellableCoroutine { cont ->
-                billingClient.queryProductDetailsAsync(
-                    QueryProductDetailsParams.newBuilder().setProductList(params).build()
-                ) { _, details -> if (cont.isActive) cont.resume(details.productDetailsList) }
-            }
-            all.addAll(result)
+            val deferred = CompletableDeferred<List<ProductDetails>>()
+            billingClient.queryProductDetailsAsync(
+                QueryProductDetailsParams.newBuilder().setProductList(params).build()
+            ) { _, details -> deferred.complete(details.productDetailsList) }
+            all.addAll(deferred.await())
         }
         return all.associateBy { it.productId }
     }
 
     private suspend fun fetchPurchases(): List<PurchaseRecord> {
         val all = mutableListOf<Purchase>()
-        val subsPurchases = suspendCancellableCoroutine { cont ->
-            billingClient.queryPurchasesAsync(
-                QueryPurchasesParams.newBuilder()
-                    .setProductType(BillingClient.ProductType.SUBS).build()
-            ) { _, list -> if (cont.isActive) cont.resume(list) }
-        }
-        all.addAll(subsPurchases)
-        val inAppPurchases = suspendCancellableCoroutine { cont ->
-            billingClient.queryPurchasesAsync(
-                QueryPurchasesParams.newBuilder()
-                    .setProductType(BillingClient.ProductType.INAPP).build()
-            ) { _, list -> if (cont.isActive) cont.resume(list) }
-        }
-        all.addAll(inAppPurchases)
+
+        val subsDeferred = CompletableDeferred<List<Purchase>>()
+        billingClient.queryPurchasesAsync(
+            QueryPurchasesParams.newBuilder()
+                .setProductType(BillingClient.ProductType.SUBS).build()
+        ) { _, list -> subsDeferred.complete(list) }
+        all.addAll(subsDeferred.await())
+
+        val inAppDeferred = CompletableDeferred<List<Purchase>>()
+        billingClient.queryPurchasesAsync(
+            QueryPurchasesParams.newBuilder()
+                .setProductType(BillingClient.ProductType.INAPP).build()
+        ) { _, list -> inAppDeferred.complete(list) }
+        all.addAll(inAppDeferred.await())
+
         return all.flatMap { it.toPurchaseRecords() }
     }
 
