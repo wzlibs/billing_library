@@ -249,6 +249,17 @@ class GooglePlayBillingLibrary(
         }
     }
 
+    override suspend fun restorePurchases(): List<PurchasedItem> {
+        val purchaseRecords = fetchPurchases()
+        return purchaseRecords
+            .filter { it.isPurchased }
+            .map {
+                val isConsume = billingProducts[it.productId]?.type == BillingProductType.CONSUMABLE
+                consumeOrAcknowledge(it, isConsume)
+                PurchasedItem(it, detailProducts[it.productId]?.toBillingProductDetail())
+            }
+    }
+
     override fun purchase(activity: Activity, productId: String) {
         val productDetail: ProductDetails = detailProducts[productId] ?: run {
             emitUpdate(PurchaseUpdate.Error)

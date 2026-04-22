@@ -6,6 +6,7 @@ import com.src.billing_library.model.connection.BillingConnectionResult
 import com.src.billing_library.model.product.BillingProduct
 import com.src.billing_library.model.purchase.PurchaseUpdate
 import com.src.billing_library.model.purchase.PurchaseRecord
+import com.src.billing_library.model.purchase.PurchasedItem
 
 interface BillingLibrary {
 
@@ -18,6 +19,8 @@ interface BillingLibrary {
     ): BillingQueryResult
 
     fun purchase(activity: Activity, productId: String)
+
+    suspend fun restorePurchases(): List<PurchasedItem>
 
     fun endConnection()
 
