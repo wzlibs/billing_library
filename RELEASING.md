@@ -5,8 +5,9 @@ Tài liệu dành cho người maintain repo này. `billing_library` được pu
 
 ## 1. Bump version
 
-Sửa `billingLibraryVersion` trong `gradle.properties` (chỉ dùng nội bộ cho
-`publishToMavenLocal` — JitPack **không** đọc giá trị này, xem mục 2):
+Sửa `billingLibraryVersion` trong `gradle.properties` cho **khớp chính xác với tên tag bỏ tiền tố `v`**
+(JitPack map version = tag không có `v`: tag `v1.2.3` → version `1.2.3`; publication version phải
+khớp, nếu không JitPack sẽ 404 dù build báo "ok"):
 
 ```properties
 billingLibraryVersion=0.2.0
